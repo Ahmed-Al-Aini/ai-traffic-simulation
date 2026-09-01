@@ -1,0 +1,53 @@
+"""Application configuration and simulation constants."""
+
+class Config:
+    SCREEN_WIDTH = 1400
+    SCREEN_HEIGHT = 800
+    FPS = 40
+
+    ROAD_WIDTH = 100
+    LANE_WIDTH = 35
+
+    MAX_VEHICLES = 25
+    SPAWN_INTERVAL = 25
+    NORMAL_SPEED_MIN = 1.5
+    NORMAL_SPEED_MAX = 2.0
+    EMERGENCY_SPEED = 2.0  # FASTER emergency vehicles
+    EMERGENCY_ACCELERATION = 0.1  # Faster acceleration
+    ACCELERATION = 0.2
+    DECELERATION = 0.35
+    STOP_DISTANCE = 50
+
+    GREEN_DURATION = 150
+    YELLOW_DURATION = 50
+    ALL_RED_DURATION = 30
+    CONGESTION_THRESHOLD = 6
+    HIGH_CONGESTION_THRESHOLD = 10
+
+    INTERSECTION_HALF_WIDTH = 45
+    YELLOW_EXTENSION = 15
+
+    TURN_CURVE_POINTS = 15
+    TURN_SPEED_FACTOR = 0.75
+
+    INSTITUTION_ROUTE_WIDTH = 15
+    # VERY CLOSE detection - only trigger when very near intersection
+    EMERGENCY_DETECTION_DISTANCE = 80
+
+    STATE_SIZE = 16
+    ACTION_SIZE = 4
+    MEMORY_SIZE = 20000
+    BATCH_SIZE = 64
+    GAMMA = 0.95
+    EPSILON_START = 1.0
+    EPSILON_MIN = 0.01
+    EPSILON_DECAY = 0.995
+    LEARNING_RATE = 0.001
+
+    MAX_EMERGENCY_VEHICLES = 3
+    EMERGENCY_GENERATION_INTERVAL = 400
+    EMERGENCY_OVERRIDE_DURATION = 25  # Longer override duration
+
+    DB_NAME = 'traffic_emergency.db'
+    SAVE_INTERVAL = 15
+
