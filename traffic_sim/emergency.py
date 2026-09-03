@@ -265,14 +265,14 @@ class EmergencyVehicle:
         self.trail.append(Position(self.position.x, self.position.y))
         return False
 
-    def _get_lane_x(self, direction: Direction) -> float:
+    def _get_lane_x(self, direction: Direction) -> float | None:
         ix = self.intersection_pos.x
         lw = Config.LANE_WIDTH
         if direction == Direction.NORTH: return ix - lw * 0.5
         elif direction == Direction.SOUTH: return ix + lw * 0.5
         return None
 
-    def _get_lane_y(self, direction: Direction) -> float:
+    def _get_lane_y(self, direction: Direction) -> float | None:
         iy = self.intersection_pos.y
         lw = Config.LANE_WIDTH
         if direction == Direction.EAST: return iy - lw * 0.5
@@ -399,7 +399,3 @@ class EmergencyDispatcher:
                 record['status'] = 'completed'
                 self.active_emergencies.remove(record)
                 break
-
-
-# ============================================
-# TRAFFIC LIGHT CONTROLLER WITH CONGESTION PRIORITY

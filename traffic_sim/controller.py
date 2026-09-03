@@ -35,7 +35,7 @@ class TrafficLightController:
         self.congestion_events = 0
         self.emergency_events = 0
         self.last_congestion_check = 0
-        self.congestion_check_interval = 60  # Check congestion every 30 frames
+        self.congestion_check_interval = 30  # Check congestion every 30 frames
 
     def get_vehicle_counts(self, vehicles: List[Dict]) -> Dict[Direction, int]:
         counts = {d: 0 for d in Direction.get_all()}
@@ -205,8 +205,3 @@ class TrafficLightController:
 
     def get_green_directions(self) -> List[str]:
         return [d.get_arabic_name() for d, l in self.lights.items() if l['state'] == LightState.GREEN]
-
-
-# ============================================
-# AI CONTROLLER (DQN)
-# ============================================

@@ -159,6 +159,9 @@ class TrafficSimulator:
             'passed_intersection': False,
             'entered_intersection': False,
             'touching_intersection': False,
+            # Once a vehicle reaches the crossing boundary, it must clear it
+            # even if the signal changes to yellow or red.
+            'committed_to_cross': False,
             'turn_decision': None,
             'turning': False,
             'new_direction': None,
@@ -189,8 +192,10 @@ class TrafficSimulator:
 
             if touching_square and not in_square:
                 vehicle['touching_intersection'] = True
+                vehicle['committed_to_cross'] = True
             elif in_square:
                 vehicle['touching_intersection'] = True
+                vehicle['committed_to_cross'] = True
 
             dist_to_center = pos.distance_to(self.intersection)
             if dist_to_center < 100 and vehicle.get('turn_decision') is None:
@@ -266,7 +271,7 @@ class TrafficSimulator:
                             if dist_to_center < 100 and not vehicle.get('entered_intersection'):
                                 should_stop = True
 
-            if not vehicle.get('entered_intersection'):
+            if not vehicle.get('entered_intersection') and not vehicle.get('committed_to_cross'):
                 for other in self.vehicles:
                     if other['id'] != vehicle['id'] and other['direction'] == direction:
                         dist = pos.distance_to(other['position'])
@@ -278,7 +283,14 @@ class TrafficSimulator:
                             if is_ahead:
                                 should_stop = True
 
-            if should_stop:
+            # A vehicle that has touched the crossing boundary is committed
+            # to clearing the intersection; never stop it because of a later
+            # yellow/red transition or a following-distance check.
+            if (vehicle.get('committed_to_cross') or vehicle.get('entered_intersection')) and not vehicle.get('passed_intersection'):
+                should_stop = False
+                vehicle['target_speed'] = vehicle['max_speed']
+                vehicle['stopped'] = False
+            elif should_stop:
                 vehicle['target_speed'] = 0
                 vehicle['stopped'] = True
                 vehicle['wait_time'] += 1 / Config.FPS
