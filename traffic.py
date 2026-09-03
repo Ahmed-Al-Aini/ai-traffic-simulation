@@ -146,7 +146,7 @@ class Position:
         return math.sqrt((self.x - other.x)**2 + (self.y - other.y)**2)
 
     def as_tuple(self) -> Tuple[int, int]:
-        return int(self.x), int(self.y)
+        return (int(self.x), int(self.y))
 
     def move_towards(self, target: 'Position', speed: float) -> 'Position':
         dx = target.x - self.x
@@ -162,11 +162,11 @@ class Position:
 # ============================================
 
 class GovernmentInstitution:
-    def __init__(self, name: str, type_1: str, location: Tuple[int, int], contact: str,
+    def __init__(self, name: str, type: str, location: Tuple[int, int], contact: str,
                  route_to_main: List[Tuple[float, float]] = None, entry_direction: Direction = None):
         self.id = str(uuid.uuid4())[:8]
         self.name = name
-        self.type = type_1
+        self.type = type
         self.location = Position(location[0], location[1])
         self.contact = contact
         self.vehicles: List['EmergencyVehicle'] = []
@@ -175,20 +175,12 @@ class GovernmentInstitution:
         self.route_to_main = route_to_main or []
         self.entry_direction = entry_direction
         self.icons = {'hospital': '🏥', 'fire': '🚒', 'police': '🚓', 'civil_defense': '🛡️'}
-        self.icon = self.icons.get(type_1, '🏛️')
+        self.icon = self.icons.get(type, '🏛️')
         self.colors = {'hospital': (0, 200, 100), 'fire': (255, 50, 0), 'police': (0, 50, 255), 'civil_defense': (255, 200, 0)}
-        self.color = self.colors.get(type_1, (200, 200, 200))
+        self.color = self.colors.get(type, (200, 200, 200))
 
     def get_distance_to(self, position: Position) -> float:
         return self.location.distance_to(position)
-
-
-def _get_new_direction(current: Direction, turn: TurnDirection) -> Direction:
-    if turn == TurnDirection.STRAIGHT: return current
-    order = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
-    idx = order.index(current)
-    new_idx = (idx + 1) % 4 if turn == TurnDirection.RIGHT else (idx - 1) % 4
-    return order[new_idx]
 
 
 class EmergencyVehicle:
@@ -346,7 +338,7 @@ class EmergencyVehicle:
         if dist_to_center < 80 and self.turn_decision is None:
             self.turn_decision = random.choice([TurnDirection.STRAIGHT, TurnDirection.LEFT, TurnDirection.RIGHT])
             if self.turn_decision != TurnDirection.STRAIGHT:
-                self.new_direction = _get_new_direction(direction, self.turn_decision)
+                self.new_direction = self._get_new_direction(direction, self.turn_decision)
 
         # Enter intersection
         if in_square and not self.entered_intersection:
@@ -424,14 +416,14 @@ class EmergencyVehicle:
         self.trail.append(Position(self.position.x, self.position.y))
         return False
 
-    def _get_lane_x(self, direction: Direction) -> float | None:
+    def _get_lane_x(self, direction: Direction) -> float:
         ix = self.intersection_pos.x
         lw = Config.LANE_WIDTH
         if direction == Direction.NORTH: return ix - lw * 0.5
         elif direction == Direction.SOUTH: return ix + lw * 0.5
         return None
 
-    def _get_lane_y(self, direction: Direction) -> float | None:
+    def _get_lane_y(self, direction: Direction) -> float:
         iy = self.intersection_pos.y
         lw = Config.LANE_WIDTH
         if direction == Direction.EAST: return iy - lw * 0.5
@@ -444,6 +436,13 @@ class EmergencyVehicle:
             lane_y = self._get_lane_y(self.direction)
             if lane_x is not None: self.position.x = lane_x
             if lane_y is not None: self.position.y = lane_y
+
+    def _get_new_direction(self, current: Direction, turn: TurnDirection) -> Direction:
+        if turn == TurnDirection.STRAIGHT: return current
+        order = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
+        idx = order.index(current)
+        new_idx = (idx + 1) % 4 if turn == TurnDirection.RIGHT else (idx - 1) % 4
+        return order[new_idx]
 
     def _generate_turn_curve(self, start: Position, end: Position, curr_dir: Direction, new_dir: Direction) -> List[Position]:
         ix, iy = self.intersection_pos.x, self.intersection_pos.y
@@ -459,7 +458,7 @@ class EmergencyVehicle:
             (Direction.WEST, Direction.NORTH): (ix - hw * 0.8, iy - hw * 0.8),
             (Direction.WEST, Direction.SOUTH): (ix - hw * 0.8, iy + hw * 0.8),
         }
-        cx, cy = turn_map.get()
+        cx, cy = turn_map.get((curr_dir, new_dir), ((start.x + end.x) / 2, (start.y + end.y) / 2))
 
         points = []
         for i in range(Config.TURN_CURVE_POINTS + 1):
@@ -600,7 +599,7 @@ class TrafficLightController:
     def is_position_in_square(self, pos: Position) -> bool:
         ix, iy = self.intersection.x, self.intersection.y
         hw = self.half_width
-        return abs(pos.x - ix) <= hw and abs(pos.y - iy) <= hw
+        return (abs(pos.x - ix) <= hw and abs(pos.y - iy) <= hw)
 
     def is_intersection_occupied(self, vehicles: List[Dict]) -> bool:
         for vehicle in vehicles:
@@ -813,12 +812,11 @@ class TrafficAIAgent:
         if len(self.memory) < batch_size:
             return
         minibatch = random.sample(self.memory, batch_size)
-        states = torch.FloatTensor(np.array([ee[0] for ee in minibatch])).to(self.device)
-        actions = torch.LongTensor(np.array([ee[1] for ee in minibatch])).to(self.device)
-        rewards = torch.FloatTensor(np.array([ee[2] for ee in minibatch])).to(self.device)
-        next_states = torch.FloatTensor(np.array([ee[3] for ee in minibatch])).to(self.device)
-        dones = torch.BoolTensor(np.array([ee[4] for ee in minibatch])).to(self.device)
-
+        states = torch.FloatTensor(np.array([e[0] for e in minibatch])).to(self.device)
+        actions = torch.LongTensor(np.array([e[1] for e in minibatch])).to(self.device)
+        rewards = torch.FloatTensor(np.array([e[2] for e in minibatch])).to(self.device)
+        next_states = torch.FloatTensor(np.array([e[3] for e in minibatch])).to(self.device)
+        dones = torch.BoolTensor(np.array([e[4] for e in minibatch])).to(self.device)
         current_q = self.model(states).gather(1, actions.unsqueeze(1))
         with torch.no_grad():
             next_q = self.target_model(next_states).max(1)[0]
@@ -888,14 +886,14 @@ class TrafficSimulator:
     # LANE SYSTEM
     # ============================================
 
-    def get_correct_lane_x(self, direction: Direction) -> float | None:
+    def get_correct_lane_x(self, direction: Direction) -> float:
         ix = self.intersection.x
         lw = self.lane_width
         if direction == Direction.NORTH: return ix - lw * 0.5
         elif direction == Direction.SOUTH: return ix + lw * 0.5
         return None
 
-    def get_correct_lane_y(self, direction: Direction) -> float | None:
+    def get_correct_lane_y(self, direction: Direction) -> float:
         iy = self.intersection.y
         lw = self.lane_width
         if direction == Direction.EAST: return iy - lw * 0.5
@@ -948,7 +946,7 @@ class TrafficSimulator:
     def is_position_in_square(self, pos: Position) -> bool:
         ix, iy = self.intersection.x, self.intersection.y
         hw = self.half_width
-        return abs(pos.x - ix) <= hw and abs(pos.y - iy) <= hw
+        return (abs(pos.x - ix) <= hw and abs(pos.y - iy) <= hw)
 
     def get_random_turn(self, direction: Direction) -> TurnDirection:
         rand = random.random()
