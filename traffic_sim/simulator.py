@@ -46,7 +46,12 @@ class TrafficSimulator:
 
         self.COLORS = {
             'road': (50, 50, 60), 'lane_marking': (255, 255, 255), 'sidewalk': (80, 80, 90),
-            'grass': (34, 139, 34), 'stop_line': (255, 255, 255), 'intersection_zone': (100, 100, 120),
+            # Urban background palette: the former grass field is now a city block.
+            'urban_base': (188, 193, 188), 'lot': (214, 211, 198), 'lot_line': (155, 158, 151),
+            'building_wall': (202, 176, 145), 'building_wall_alt': (177, 190, 198),
+            'building_roof': (112, 80, 72), 'building_roof_alt': (75, 91, 105),
+            'window': (104, 172, 190), 'window_glow': (248, 219, 139), 'door': (91, 68, 55),
+            'grass': (188, 193, 188), 'stop_line': (255, 255, 255), 'intersection_zone': (100, 100, 120),
             'intersection_border': (200, 200, 100), 'institution_route': (80, 80, 100),
         }
 
@@ -371,7 +376,13 @@ class TrafficSimulator:
 
     def update_emergency_vehicles(self):
         for vehicle in self.emergency_vehicles[:]:
-            arrived = vehicle.update_position(self.intersection, self.traffic_controller)
+            arrived = vehicle.update_position(
+                self.intersection,
+                self.traffic_controller,
+                self.vehicles + [
+                    other for other in self.emergency_vehicles if other is not vehicle
+                ],
+            )
             if vehicle.arrived:
                 self.metrics['emergency_completed'] += 1
                 self.dispatcher.complete_emergency(vehicle.id)
@@ -382,7 +393,9 @@ class TrafficSimulator:
     # ============================================
 
     def draw(self):
-        self.screen.fill(self.COLORS['grass'])
+        # Draw a city environment instead of a single green background.
+        self.screen.fill(self.COLORS['urban_base'])
+        self._draw_urban_background()
         self._draw_institution_routes()
         self._draw_roads()
         self._draw_square_intersection_zone()
@@ -395,6 +408,70 @@ class TrafficSimulator:
         self._draw_congestion_info()
         self._draw_emergency_alert()
         pygame.display.flip()
+
+    def _draw_urban_background(self):
+        """Render deterministic residential/commercial blocks around the intersection."""
+        ix, iy = int(self.intersection.x), int(self.intersection.y)
+        road_edge = self.road_width // 2 + 12
+
+        # Block parcels and narrow internal access streets make the empty space read as a city.
+        blocks = [
+            (18, 18, ix - road_edge - 18, iy - road_edge - 18),
+            (ix + road_edge + 18, 18, self.width - ix - road_edge - 36, iy - road_edge - 18),
+            (18, iy + road_edge + 18, ix - road_edge - 18, self.height - iy - road_edge - 36),
+            (ix + road_edge + 18, iy + road_edge + 18, self.width - ix - road_edge - 36, self.height - iy - road_edge - 36),
+        ]
+        for bx, by, bw, bh in blocks:
+            if bw <= 30 or bh <= 30:
+                continue
+            pygame.draw.rect(self.screen, self.COLORS['lot'], (bx, by, bw, bh), border_radius=4)
+            pygame.draw.rect(self.screen, self.COLORS['lot_line'], (bx, by, bw, bh), 2, border_radius=4)
+            # A small paved lane divides each urban block into properties.
+            if bw > bh:
+                divider_y = by + bh // 2
+                pygame.draw.line(self.screen, (169, 170, 164), (bx + 8, divider_y), (bx + bw - 8, divider_y), 7)
+            else:
+                divider_x = bx + bw // 2
+                pygame.draw.line(self.screen, (169, 170, 164), (divider_x, by + 8), (divider_x, by + bh - 8), 7)
+
+        # Houses/buildings are positioned in the four corners and never overlap traffic lanes.
+        buildings = [
+            (42, 42, 108, 70, self.COLORS['building_wall'], self.COLORS['building_roof']),
+            (185, 30, 92, 92, self.COLORS['building_wall_alt'], self.COLORS['building_roof_alt']),
+            (self.width - 170, 38, 112, 76, self.COLORS['building_wall_alt'], self.COLORS['building_roof_alt']),
+            (self.width - 315, 28, 102, 92, self.COLORS['building_wall'], self.COLORS['building_roof']),
+            (45, self.height - 142, 118, 82, self.COLORS['building_wall_alt'], self.COLORS['building_roof_alt']),
+            (205, self.height - 132, 92, 70, self.COLORS['building_wall'], self.COLORS['building_roof']),
+            (self.width - 172, self.height - 138, 116, 84, self.COLORS['building_wall'], self.COLORS['building_roof']),
+            (self.width - 318, self.height - 128, 104, 70, self.COLORS['building_wall_alt'], self.COLORS['building_roof_alt']),
+        ]
+        for x, y, w, h, wall, roof in buildings:
+            self._draw_building(x, y, w, h, wall, roof)
+
+        # Small trees and shrubs add scale without returning to a blank green field.
+        for x, y in [(30, 155), (155, 150), (self.width - 30, 150), (self.width - 155, 150),
+                     (30, self.height - 175), (155, self.height - 168),
+                     (self.width - 30, self.height - 176), (self.width - 155, self.height - 166)]:
+            pygame.draw.circle(self.screen, (77, 119, 75), (x, y), 9)
+            pygame.draw.circle(self.screen, (105, 143, 82), (x - 4, y - 4), 5)
+            pygame.draw.line(self.screen, (96, 75, 54), (x, y + 7), (x, y + 15), 3)
+
+    def _draw_building(self, x, y, width, height, wall, roof):
+        """Draw a compact building with roof, windows, entrance and facade depth."""
+        shadow = (116, 121, 117)
+        pygame.draw.rect(self.screen, shadow, (x + 5, y + 6, width, height), border_radius=3)
+        pygame.draw.rect(self.screen, wall, (x, y, width, height), border_radius=3)
+        pygame.draw.polygon(self.screen, roof, [(x - 5, y + 4), (x + width // 2, y - 15), (x + width + 5, y + 4)])
+        pygame.draw.line(self.screen, (238, 226, 204), (x + 5, y + 8), (x + width - 5, y + 8), 2)
+        cols = max(2, min(4, width // 30))
+        rows = max(1, min(3, height // 30))
+        for row in range(rows):
+            for col in range(cols):
+                wx = x + 12 + col * ((width - 24) // cols)
+                wy = y + 17 + row * ((height - 30) // rows)
+                pygame.draw.rect(self.screen, self.COLORS['window'], (wx, wy, 11, 8), border_radius=1)
+                pygame.draw.line(self.screen, (222, 235, 226), (wx + 5, wy), (wx + 5, wy + 8), 1)
+        pygame.draw.rect(self.screen, self.COLORS['door'], (x + width // 2 - 7, y + height - 22, 14, 22))
 
     def _draw_institution_routes(self):
         route_width = Config.INSTITUTION_ROUTE_WIDTH
@@ -694,4 +771,3 @@ class TrafficSimulator:
 
         pygame.quit()
         print("\nSimulation stopped")
-

@@ -42,7 +42,7 @@ class EmergencyVehicle:
         self.priority = priority
         self.type = institution.type
         self.position = Position(institution.location.x, institution.location.y)
-        self.speed = Config.EMERGENCY_SPEED
+        self.speed = 0.0
         self.target_speed = Config.EMERGENCY_SPEED
         self.max_speed = Config.EMERGENCY_SPEED
         self.active = True
@@ -77,6 +77,7 @@ class EmergencyVehicle:
         self.turn_curve = []
         self.curve_index = 0
         self.lane_corrected = False
+        self.exit_destination = None
 
         # Visual
         self.icons = {'hospital': '🚑', 'fire': '🚒', 'police': '🚓', 'civil_defense': '🛡️'}
@@ -87,7 +88,7 @@ class EmergencyVehicle:
         # Track which direction vehicle is coming from
         self.approach_direction = None
 
-    def update_position(self, intersection_pos: Position, traffic_controller) -> bool:
+    def update_position(self, intersection_pos: Position, traffic_controller, vehicles: List[Dict] = None) -> bool:
         if self.arrived:
             return True
 
@@ -95,57 +96,87 @@ class EmergencyVehicle:
 
         # Stage 1: Moving from institution to main road (FAST)
         if not self.on_main_road and self.current_route_index < len(self.route_points):
+            # اطلب الأولوية أثناء الاقتراب من الجولة وقبل دخولها.
+            self._request_early_priority(
+                intersection_pos,
+                traffic_controller
+            )
+
             target = self.route_points[self.current_route_index]
+
+            self._smooth_speed(self.max_speed)
             self.position = self.position.move_towards(target, self.speed)
 
-            if self.current_route_index == len(self.route_points) - 1:
-                if self.entry_direction:
-                    target_x = self._get_lane_x(self.entry_direction)
-                    target_y = self._get_lane_y(self.entry_direction)
-                    if target_x is not None:
-                        self.position.x += (target_x - self.position.x) * 0.15
-                    if target_y is not None:
-                        self.position.y += (target_y - self.position.y) * 0.15
-
-            if self.position.distance_to(target) < 8:
+            # Route points already terminate on the correct main-road lane.
+            # Do not apply a percentage-based correction here: it can move
+            # the vehicle dozens of pixels in one frame.
+            if self.position.distance_to(target) <= 0.001:
                 self.current_route_index += 1
                 if self.current_route_index >= len(self.route_points):
                     self.on_main_road = True
+                    # تثبيت السيارة على مركز حارة الدخول قبل بدء الحركة على
+                    # الطريق الرئيسي؛ لا نعتمد على آخر نقطة تقريبية في المسار.
                     self.direction = self.entry_direction
                     self.approach_direction = self.entry_direction
-                    self.status = 'on_main_road'
                     self._snap_to_lane()
+                    self.lane_corrected = True
+                    self.status = 'on_main_road'
 
             self.trail.append(Position(self.position.x, self.position.y))
             return False
 
         # Stage 2: On main road - FAST with priority
         if self.on_main_road and not self.passed_intersection:
-            return self._update_on_main_road(intersection_pos, traffic_controller)
+            return self._update_on_main_road(intersection_pos, traffic_controller, vehicles or [])
 
         # Stage 3: After passing intersection
         if self.passed_intersection:
-            self.position = self.position.move_towards(self.destination, self.speed)
+            self._smooth_speed(self.max_speed)
+
+            # بعد الخروج، استمر في الاتجاه نفسه على خط الخروج.
+            if self.direction == Direction.NORTH:
+                self.position.y -= self.speed
+            elif self.direction == Direction.SOUTH:
+                self.position.y += self.speed
+            elif self.direction == Direction.EAST:
+                self.position.x += self.speed
+            elif self.direction == Direction.WEST:
+                self.position.x -= self.speed
+
             self.trail.append(Position(self.position.x, self.position.y))
 
-            if self.direction:
-                target_x = self._get_lane_x(self.direction)
-                target_y = self._get_lane_y(self.direction)
-                if target_x is not None:
-                    diff = target_x - self.position.x
-                    if abs(diff) > 1: self.position.x += diff * 0.2
-                if target_y is not None:
-                    diff = target_y - self.position.y
-                    if abs(diff) > 1: self.position.y += diff * 0.2
-
-            if self.position.distance_to(self.destination) < 8:
+            # لا تعتبر exit_destination نهاية الرحلة.
+            # احذف السيارة فقط بعد خروجها فعلياً من الشاشة.
+            margin = 80
+            if (
+                    self.position.x < -margin or
+                    self.position.x > 1400 + margin or
+                    self.position.y < -margin or
+                    self.position.y > 800 + margin
+            ):
                 self.arrived = True
-                self.status = 'arrived'
+                self.status = 'off_screen'
                 return True
 
         return False
 
-    def _update_on_main_road(self, intersection_pos: Position, traffic_controller) -> bool:
+    def _request_early_priority(self, intersection_pos, traffic_controller):
+        """طلب أولوية مبكرة قبل دخول السيارة إلى الجولة."""
+        if self.approaching_intersection:
+            return
+
+        distance = self.position.distance_to(intersection_pos)
+        if distance <= Config.EMERGENCY_EARLY_PRIORITY_DISTANCE:
+            self.approaching_intersection = True
+            self.approach_direction = self.entry_direction or self.direction
+
+            if not traffic_controller.priority_override_active:
+                traffic_controller.set_emergency_override(
+                    self.approach_direction,
+                    self
+                )
+
+    def _update_on_main_road(self, intersection_pos: Position, traffic_controller, vehicles: List[Dict]) -> bool:
         """Move FAST on main road - only trigger light when VERY close"""
         pos = self.position
         direction = self.direction
@@ -159,13 +190,10 @@ class EmergencyVehicle:
         if dist_to_center < Config.EMERGENCY_DETECTION_DISTANCE and not self.passed_intersection:
             if not self.approaching_intersection:
                 self.approaching_intersection = True
-                # Determine approach direction
-                dx = pos.x - ix
-                dy = pos.y - iy
-                if abs(dx) > abs(dy):
-                    self.approach_direction = Direction.WEST if dx < 0 else Direction.EAST
-                else:
-                    self.approach_direction = Direction.NORTH if dy < 0 else Direction.SOUTH
+                # أولوية الإشارة للخط الذي تسير فيه السيارة عند الاقتراب،
+                # وهو خط الدخول الفعلي إلى الجولة، وليس جهة الخروج المتوقعة.
+                # direction لا يتغير إلى new_direction إلا بعد عبور التقاطع.
+                self.approach_direction = self.direction or self.entry_direction
 
                 # Only trigger override when very close
                 if dist_to_center < Config.EMERGENCY_DETECTION_DISTANCE:
@@ -185,7 +213,7 @@ class EmergencyVehicle:
 
         # Choose random turn at intersection
         if dist_to_center < 80 and self.turn_decision is None:
-            self.turn_decision = random.choice([TurnDirection.STRAIGHT, TurnDirection.LEFT, TurnDirection.RIGHT])
+            self.turn_decision = self._get_turn_for_destination(direction)
             if self.turn_decision != TurnDirection.STRAIGHT:
                 self.new_direction = self._get_new_direction(direction, self.turn_decision)
 
@@ -221,9 +249,12 @@ class EmergencyVehicle:
                     self.turning = False
                     self._snap_to_lane()
                     self.lane_corrected = True
+                self.exit_destination = self._get_exit_destination()
                 self.status = 'passed_intersection'
 
-        # FAST movement
+        # Keep a normal cruise speed and follow vehicles ahead in this lane.
+        self.target_speed = self._get_following_speed(vehicles)
+        self._smooth_speed(self.target_speed)
         move_speed = self.speed
 
         if self.entered_intersection and not self.passed_intersection:
@@ -265,14 +296,72 @@ class EmergencyVehicle:
         self.trail.append(Position(self.position.x, self.position.y))
         return False
 
-    def _get_lane_x(self, direction: Direction) -> float | None:
+    def _smooth_speed(self, target_speed: float) -> None:
+        """Change speed gradually; never jump when joining the main road."""
+        self.target_speed = max(0.0, min(self.max_speed, target_speed))
+        if self.speed < self.target_speed:
+            self.speed = min(self.target_speed, self.speed + Config.EMERGENCY_ACCELERATION)
+        elif self.speed > self.target_speed:
+            self.speed = max(self.target_speed, self.speed - Config.EMERGENCY_DECELERATION)
+        self.stopped = self.speed <= 0.01
+
+    def _get_following_speed(self, vehicles: List[Dict]) -> float:
+        """Return a safe speed while following vehicles in the same lane."""
+        if not self.direction:
+            return 0.0
+
+        nearest_gap = None
+        lane_tolerance = Config.LANE_WIDTH * Config.EMERGENCY_LANE_TOLERANCE
+        for vehicle in vehicles:
+            if vehicle is self:
+                continue
+            if isinstance(vehicle, dict):
+                passed = vehicle.get('passed_intersection', False)
+                other_direction = vehicle.get('direction')
+                other = vehicle.get('position')
+            else:
+                passed = getattr(vehicle, 'passed_intersection', False)
+                other_direction = getattr(vehicle, 'direction', None)
+                other = getattr(vehicle, 'position', None)
+            if passed or other_direction != self.direction or other is None:
+                continue
+
+            if self.direction in (Direction.NORTH, Direction.SOUTH):
+                if abs(other.x - self.position.x) > lane_tolerance:
+                    continue
+                gap = (self.position.y - other.y if self.direction == Direction.NORTH
+                       else other.y - self.position.y)
+            else:
+                if abs(other.y - self.position.y) > lane_tolerance:
+                    continue
+                gap = (other.x - self.position.x if self.direction == Direction.EAST
+                       else self.position.x - other.x)
+
+            if gap > 0 and (nearest_gap is None or gap < nearest_gap):
+                nearest_gap = gap
+
+        if nearest_gap is None:
+            return self.max_speed
+        if nearest_gap <= Config.EMERGENCY_FOLLOW_DISTANCE:
+            return 0.0
+        return min(self.max_speed, max(0.5, (nearest_gap - Config.EMERGENCY_FOLLOW_DISTANCE) * 0.15))
+
+    def _get_exit_destination(self) -> Position:
+        """Return the destination projected onto the vehicle's exit lane."""
+        if self.direction in (Direction.NORTH, Direction.SOUTH):
+            lane_x = self._get_lane_x(self.direction)
+            return Position(lane_x, self.destination.y)
+        lane_y = self._get_lane_y(self.direction)
+        return Position(self.destination.x, lane_y)
+
+    def _get_lane_x(self, direction: Direction) -> float:
         ix = self.intersection_pos.x
         lw = Config.LANE_WIDTH
         if direction == Direction.NORTH: return ix - lw * 0.5
         elif direction == Direction.SOUTH: return ix + lw * 0.5
         return None
 
-    def _get_lane_y(self, direction: Direction) -> float | None:
+    def _get_lane_y(self, direction: Direction) -> float:
         iy = self.intersection_pos.y
         lw = Config.LANE_WIDTH
         if direction == Direction.EAST: return iy - lw * 0.5
@@ -285,6 +374,24 @@ class EmergencyVehicle:
             lane_y = self._get_lane_y(self.direction)
             if lane_x is not None: self.position.x = lane_x
             if lane_y is not None: self.position.y = lane_y
+
+    def _get_turn_for_destination(self, direction: Direction) -> TurnDirection:
+        """Choose the exit that leads toward the mission destination."""
+        dx = self.destination.x - self.intersection_pos.x
+        dy = self.destination.y - self.intersection_pos.y
+        if direction == Direction.NORTH:
+            if dx > Config.LANE_WIDTH: return TurnDirection.RIGHT
+            if dx < -Config.LANE_WIDTH: return TurnDirection.LEFT
+        elif direction == Direction.SOUTH:
+            if dx < -Config.LANE_WIDTH: return TurnDirection.RIGHT
+            if dx > Config.LANE_WIDTH: return TurnDirection.LEFT
+        elif direction == Direction.EAST:
+            if dy < -Config.LANE_WIDTH: return TurnDirection.LEFT
+            if dy > Config.LANE_WIDTH: return TurnDirection.RIGHT
+        elif direction == Direction.WEST:
+            if dy > Config.LANE_WIDTH: return TurnDirection.LEFT
+            if dy < -Config.LANE_WIDTH: return TurnDirection.RIGHT
+        return TurnDirection.STRAIGHT
 
     def _get_new_direction(self, current: Direction, turn: TurnDirection) -> Direction:
         if turn == TurnDirection.STRAIGHT: return current
@@ -336,37 +443,37 @@ class EmergencyDispatcher:
             {
                 'name': 'Central Peace Hospital', 'type': 'hospital',
                 'location': (150, 150), 'contact': '011-1234567',
-                'route': [(150, iy - rw//2), (ix - lw*0.5, iy - rw//2)],
-                'entry_direction': Direction.NORTH
+                'route': [(150, iy - lw*0.5), (ix - Config.INTERSECTION_HALF_WIDTH - 1, iy - lw*0.5)],
+                'entry_direction': Direction.EAST
             },
             {
                 'name': 'Emergency Medical Center', 'type': 'hospital',
                 'location': (1050, 650), 'contact': '011-7654321',
-                'route': [(1050, iy + rw//2), (ix + lw*0.5, iy + rw//2)],
-                'entry_direction': Direction.SOUTH
+                'route': [(1050, iy + lw*0.5), (ix + Config.INTERSECTION_HALF_WIDTH + 1, iy + lw*0.5)],
+                'entry_direction': Direction.WEST
             },
             {
                 'name': 'Eastern Fire Station', 'type': 'fire',
                 'location': (200, 700), 'contact': '012-3456789',
-                'route': [(200, iy + rw//2), (ix - lw*0.5, iy + rw//2)],
-                'entry_direction': Direction.SOUTH
+                'route': [(200, iy - lw*0.5), (ix - Config.INTERSECTION_HALF_WIDTH - 1, iy - lw*0.5)],
+                'entry_direction': Direction.EAST
             },
             {
                 'name': 'Western Fire Station', 'type': 'fire',
                 'location': (1000, 100), 'contact': '012-9876543',
-                'route': [(1000, iy - rw//2), (ix + lw*0.5, iy - rw//2)],
-                'entry_direction': Direction.NORTH
+                'route': [(1000, iy + lw*0.5), (ix + Config.INTERSECTION_HALF_WIDTH + 1, iy + lw*0.5)],
+                'entry_direction': Direction.WEST
             },
             {
                 'name': 'Traffic Police HQ', 'type': 'police',
                 'location': (600, 50), 'contact': '013-4567890',
-                'route': [(600, iy - rw//2), (ix, iy - rw//2)],
-                'entry_direction': Direction.NORTH
+                'route': [(ix + lw*0.5, 50), (ix + lw*0.5, iy - Config.INTERSECTION_HALF_WIDTH - 1)],
+                'entry_direction': Direction.SOUTH
             },
             {
                 'name': 'Civil Defense Main Base', 'type': 'civil_defense',
                 'location': (50, 400), 'contact': '014-5678901',
-                'route': [(ix - rw//2, 400), (ix - rw//2, iy - lw*0.5)],
+                'route': [(50, iy - lw*0.5), (ix - Config.INTERSECTION_HALF_WIDTH - 1, iy - lw*0.5)],
                 'entry_direction': Direction.EAST
             }
         ]
