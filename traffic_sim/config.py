@@ -12,7 +12,7 @@ class Config:
     SPAWN_INTERVAL = 25
     NORMAL_SPEED_MIN = 1.5
     NORMAL_SPEED_MAX = 2.0
-    EMERGENCY_SPEED = 2.0  # Same cruise speed as normal traffic
+    EMERGENCY_SPEED = 1.7  # Same cruise speed as normal traffic
     EMERGENCY_ACCELERATION = 0.1
     EMERGENCY_DECELERATION = 0.2
     EMERGENCY_FOLLOW_DISTANCE = 28

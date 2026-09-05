@@ -1,7 +1,6 @@
 """Emergency institutions, vehicles, and dispatching."""
 
 import math
-import random
 import uuid
 from collections import deque
 from datetime import datetime
@@ -9,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .config import Config
 from .models import Direction, Position, TurnDirection
+
 
 class GovernmentInstitution:
     def __init__(self, name: str, type: str, location: Tuple[int, int], contact: str,
@@ -354,14 +354,14 @@ class EmergencyVehicle:
         lane_y = self._get_lane_y(self.direction)
         return Position(self.destination.x, lane_y)
 
-    def _get_lane_x(self, direction: Direction) -> float:
+    def _get_lane_x(self, direction: Direction) -> float | None:
         ix = self.intersection_pos.x
         lw = Config.LANE_WIDTH
         if direction == Direction.NORTH: return ix - lw * 0.5
         elif direction == Direction.SOUTH: return ix + lw * 0.5
         return None
 
-    def _get_lane_y(self, direction: Direction) -> float:
+    def _get_lane_y(self, direction: Direction) -> float | None:
         iy = self.intersection_pos.y
         lw = Config.LANE_WIDTH
         if direction == Direction.EAST: return iy - lw * 0.5
@@ -393,7 +393,8 @@ class EmergencyVehicle:
             if dy < -Config.LANE_WIDTH: return TurnDirection.RIGHT
         return TurnDirection.STRAIGHT
 
-    def _get_new_direction(self, current: Direction, turn: TurnDirection) -> Direction:
+    @staticmethod
+    def _get_new_direction(current: Direction, turn: TurnDirection) -> Direction:
         if turn == TurnDirection.STRAIGHT: return current
         order = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
         idx = order.index(current)
@@ -404,7 +405,7 @@ class EmergencyVehicle:
         ix, iy = self.intersection_pos.x, self.intersection_pos.y
         hw = Config.INTERSECTION_HALF_WIDTH
 
-        turn_map = {
+        turn_map :Dict[Tuple[Direction, Direction],Tuple[float, float]] = {
             (Direction.NORTH, Direction.EAST): (ix + hw * 0.8, iy - hw * 0.8),
             (Direction.NORTH, Direction.WEST): (ix - hw * 0.8, iy - hw * 0.8),
             (Direction.SOUTH, Direction.WEST): (ix - hw * 0.8, iy + hw * 0.8),

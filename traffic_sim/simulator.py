@@ -280,7 +280,7 @@ class TrafficSimulator:
                 for other in self.vehicles:
                     if other['id'] != vehicle['id'] and other['direction'] == direction:
                         dist = pos.distance_to(other['position'])
-                        if dist < 25:
+                        if dist < 35:
                             is_ahead = ((direction == Direction.NORTH and other['position'].y < pos.y) or
                                        (direction == Direction.SOUTH and other['position'].y > pos.y) or
                                        (direction == Direction.EAST and other['position'].x > pos.x) or

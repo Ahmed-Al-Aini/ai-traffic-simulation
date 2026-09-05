@@ -42,14 +42,14 @@ class TrafficLightController:
         for vehicle in vehicles:
             if not vehicle.get('passed_intersection', False):
                 dist = vehicle['position'].distance_to(self.intersection)
-                if dist < 200:
+                if dist < 400:
                     counts[vehicle['direction']] += 1
         return counts
 
     def is_position_in_square(self, pos: Position) -> bool:
         ix, iy = self.intersection.x, self.intersection.y
         hw = self.half_width
-        return (abs(pos.x - ix) <= hw and abs(pos.y - iy) <= hw)
+        return abs(pos.x - ix) <= hw and abs(pos.y - iy) <= hw
 
     def is_intersection_occupied(self, vehicles: List[Dict]) -> bool:
         for vehicle in vehicles:
